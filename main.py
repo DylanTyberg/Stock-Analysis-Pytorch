@@ -5,19 +5,23 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 
+#using pandas to create a datafram from the data
 data = pd.read_csv("s&p Oct 2011 - Oct 2024.csv")
 data['Date'] = pd.to_datetime(data['Date'])
 data = data.sort_values(by='Date')
 
+#converting data to numeric form and removing commas
 for column in data.columns:
     if data[column].dtype == 'object':
         data[column] = pd.to_numeric(data[column].str.replace(',', ''), errors='coerce')
 
+#creating simple moving average and Exponential moving average from the previous close data
 num_days = 30
 data["SMA"] = data["Close"].rolling(window=num_days).mean()
 data["EMA"] = data["Close"].ewm(span=num_days, adjust=False).mean()
 data = data.dropna()
 
+#calculating the relative strength index from the data
 def calculate_rsi(data, column="Close", window=14):
     delta = data[column].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -29,12 +33,18 @@ def calculate_rsi(data, column="Close", window=14):
 data["RSI"] = calculate_rsi(data, column="Close", window=7)
 data = data.dropna()
 
+#scaling the data
 scaler = MinMaxScaler()
 original_close = data["Close"]
 columns_to_scale = data.filter(regex="Close|SMA|EMA|RSI|Open|High|Low").columns
 data[columns_to_scale] =  scaler.fit_transform(data[columns_to_scale])
 
+
 def create_sequences(data, seq_len):
+    """ 
+    creates sequences of specified length, with X containing the input features
+    and y being the closing prices
+    """
     X, y = [], []
     for i in range(len(data) - seq_len):
         X.append(data[i:(i + seq_len)])
@@ -44,15 +54,18 @@ def create_sequences(data, seq_len):
 sequence_length = 10
 X, y = create_sequences(data[columns_to_scale].values, sequence_length)
 
+#splitting the data into train and test sets
 train_split = int(0.8* len(X))
 X_train, y_train = X[:train_split], y[:train_split]
 X_test, y_test = X[train_split:], y[train_split:]
 
+#converting the data into tensors
 X_train = torch.tensor(X_train, dtype=torch.float32).view(-1, sequence_length, 7)
 X_test = torch.tensor(X_test, dtype=torch.float32).view(-1, sequence_length, 7)
 y_train = torch.tensor(y_train, dtype=torch.float32).view(-1, 1)
 y_test = torch.tensor(y_test, dtype=torch.float32).view(-1, 1)
 
+#creating an LSTM model to be trained on the data
 class LSTM(nn.Module):
     def __init__(self, input_shape, hidden_units, layer_dim, output_shape):
         super(LSTM, self).__init__()
@@ -69,10 +82,13 @@ class LSTM(nn.Module):
         out = self.fc(out[:, -1, :])
         return out
 
+#initializing model with input, hidden, and output sizes, and layers.
 model = LSTM(7, 128, 1, 1)
+#creating loss function and optimizer
 loss_fn = nn.L1Loss()
 optimizer = torch.optim.Adam(params=model.parameters(), lr=0.005, weight_decay=1e-5)
 
+#training loop
 epochs = 700
 for epoch in range(epochs):
     model.train()
@@ -89,6 +105,7 @@ for epoch in range(epochs):
     if epoch % 100  == 0:
         print(f"Epoch: {epoch}|Train Loss: {loss}|Test Loss: {test_loss}")
 
+#making predictions
 model.eval()
 with torch.inference_mode():
     predictions = model(X_test)
@@ -103,6 +120,7 @@ df["Predicted Close"] = predictions[:, 0]
 print(df[["Date", "Close", "Predicted Close"]])
 
 
+#visualizing the actual data and the predicted data together
 import matplotlib.pyplot as plt
 
 plt.figure(figsize=(12, 6))
@@ -113,6 +131,7 @@ plt.xlabel("Date")
 plt.ylabel("Price")
 plt.legend()
 # %%
+#calculates the predicted next closing price based on the previous sequence of data
 seq = data[-10:].copy()
 input = seq[columns_to_scale].values
 input_tensor = torch.tensor(input, dtype=torch.float32).unsqueeze(0)
@@ -124,7 +143,7 @@ with torch.inference_mode():
     print("Raw predicted_close from model:", predicted_close_scaled)
 
 # %%
-#1. Prepare the last sequence of data
+#Prepare the last sequence of data
 def update_features(data, new_close_value, num_days):
     new_open_value = data.iloc[-1]['Close']
     
